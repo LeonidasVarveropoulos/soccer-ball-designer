@@ -3,6 +3,32 @@ import os
 from bpy.props import StringProperty, BoolProperty
 from bpy_extras.io_utils import ImportHelper, ExportHelper
 from bpy.types import Operator
+import math
+import numpy as np
+
+import sys
+import subprocess
+import os
+
+def python_exec():
+    import os
+    import bpy
+    try:
+        path = bpy.app.binary_path_python
+    except AttributeError:
+        import sys
+        path = sys.executable
+    return os.path.abspath(path)
+
+try:
+    from reportlab.pdfgen import canvas
+except:
+    python_exe = python_exec()
+
+    subprocess.call([python_exe, "-m", "ensurepip"])
+    subprocess.call([python_exe, "-m", "pip", "install", "--upgrade", "pip"])
+    subprocess.call([python_exe, "-m", "pip", "install", "reportlab"])
+    from reportlab.pdfgen import canvas
 
 # ------------------------------------------------------------------------
 #    Globals
@@ -18,7 +44,7 @@ except:
 # Soccer Ball
 ball = None
 
-def update_ball():
+def update_ball(self, context):
     if (ball is not None):
         # Remove old object
         try:
@@ -28,29 +54,72 @@ def update_ball():
         except:
           pass
 
+        # Make any needed modifications to mesh
+        ball.update_radius(bpy.context.scene.sbd_radius)
+
         # make object from mesh
         new_object = bpy.data.objects.new('soccer_ball', ball.get_mesh())
         # add object to scene collection
         ball_collection.objects.link(new_object)
 
 
+        update_pdf(self, context)
+
+def update_pdf(self, context):
+    if (ball is not None):
+        # Remove old object
+        ball.set_pdf_dim(bpy.context.scene.sbd_pdf_width, bpy.context.scene.sbd_pdf_height)
+        ball.update_pdf_mesh()
+        pdf_faces_mesh, pdf_mesh = ball.get_pdf_mesh()
+
+        try:
+            bpy.ops.object.select_all(action='DESELECT')
+            count = 0
+            while (count < len(pdf_faces_mesh)):
+                ball_collection.objects["soccer_ball_pdf_" + str(count)].select_set(True)
+                count+=1
+            ball_collection.objects["soccer_ball_pdf"].select_set(True)
+            bpy.ops.object.delete() 
+
+        except:
+            pass
+
+        if (bpy.context.scene.sbd_pdf_display):
+            count = 0
+            while (count < len(pdf_faces_mesh)):
+                # make object from mesh
+                new_object = bpy.data.objects.new("soccer_ball_pdf_" + str(count), pdf_faces_mesh[count])
+                # add object to scene collection
+                ball_collection.objects.link(new_object)
+                count += 1
+            new_pdf = bpy.data.objects.new("soccer_ball_pdf", pdf_mesh)
+            ball_collection.objects.link(new_pdf)
+
+bpy.types.Scene.sbd_radius = bpy.props.FloatProperty(name="Radius", update=update_ball, default=115, min=1, max=500)
+bpy.types.Scene.sbd_pdf_display = bpy.props.BoolProperty(name="Pdf Display", update=update_pdf, default=False)
+bpy.types.Scene.sbd_pdf_width = bpy.props.FloatProperty(name="Pdf Width", update=update_pdf, default=500, min=10)
+bpy.types.Scene.sbd_pdf_height = bpy.props.FloatProperty(name="Pdf Height", update=update_pdf, default=500, min=10)
+
 # ------------------------------------------------------------------------
 #    Operators
 # ------------------------------------------------------------------------
 
 class CreateBallOperator(Operator):
-    bl_idname = "sbw.create_ball_operator"
+    bl_idname = "sbd.create_ball_operator"
     bl_label = "Create Ball Operator"
 
     def execute(self, context):
         global ball
         ball = ClassicBall()
-        update_ball()
+
+        bpy.context.scene.sbd_radius = ball.radius
+        update_ball(self, context)
         return {'FINISHED'}
+    
 
 class LoadFileOperator(Operator, ImportHelper):
 
-    bl_idname = "sbw.load_file"
+    bl_idname = "sbd.load_file"
     bl_label = "Open the file browser (yay)"
     
     filter_glob: StringProperty(
@@ -78,7 +147,7 @@ class LoadFileOperator(Operator, ImportHelper):
     
 class ExportFileOperator(Operator, ExportHelper):
     """This appears in the tooltip of the operator and in the generated docs"""
-    bl_idname = "sbw.export_file"
+    bl_idname = "sbd.export_file"
     bl_label = "Export Ball"
 
     # ExportHelper mixin class uses this
@@ -86,7 +155,8 @@ class ExportFileOperator(Operator, ExportHelper):
     filter_glob: bpy.props.StringProperty(default="*.pdf", options={'HIDDEN'}, maxlen=255)
 
     def execute(self, context):
-        print(self.filepath)
+        if ball is not None:
+            ball.export_ball(self.filepath)
         return {'FINISHED'}
 
 # ------------------------------------------------------------------------
@@ -116,12 +186,17 @@ class SBDPanel(bpy.types.Panel):
         layout.separator()
 
         layout.label(text="Geometry Editing:")
+        col = layout.column(align=True)
+        col.prop(context.scene, 'sbd_radius', slider=True)
 
 
         layout.separator()
 
         layout.label(text="Export:")
         col = layout.column(align=True)
+        col.prop(context.scene, 'sbd_pdf_display')
+        col.prop(context.scene, 'sbd_pdf_width')
+        col.prop(context.scene, 'sbd_pdf_height')
         col.operator(ExportFileOperator.bl_idname, text="Export Soccer Ball", icon="EXPORT")
 
         layout.separator()
@@ -136,11 +211,128 @@ class SoccerBall:
         self.edges = None
         self.faces = None
 
+        self.verts_pdf = None
+        self.edges_pdf = None
+        self.faces_pdf = None
+
+        self.pdf_width = None
+        self.pdf_height = None
+
+        self.radius = None
+
+        self.panel_lip_size = None
+
+        # Num of holes per edge
+        self.panel_hole_num = None
+
+        self.panel_hole_size = None
+
     def get_mesh(self):
         mesh = bpy.data.meshes.new(name="Soccer Ball")
         mesh.from_pydata(self.verts, self.edges, self.faces)
         mesh.update()
         return mesh
+    
+    def get_pdf_mesh(self):
+        meshes = []
+        face_index = 0
+        while (face_index < len(self.verts_pdf)):
+            mesh = bpy.data.meshes.new(name="Soccer Ball PDF")
+            mesh.from_pydata(self.verts_pdf[face_index], self.edges_pdf[face_index], self.faces_pdf[face_index])
+            mesh.update()
+            meshes.append(mesh)
+            face_index+=1
+        pdf_mesh = bpy.data.meshes.new(name="PDF")
+        pdf_mesh.from_pydata([[self.radius * 2, 0, -0.1],[self.radius * 2, self.pdf_height, -0.1],[self.radius * 2 + self.pdf_width, 0, -0.1],[self.radius * 2 + self.pdf_width, self.pdf_height, -0.1]], [], [[0,1,3,2]])
+        pdf_mesh.update()
+        return meshes, pdf_mesh
+    
+    def update_radius(self, radius):
+        self.radius = radius
+
+        vert = self.verts[0]
+        length = math.sqrt(math.pow(vert[0], 2) + math.pow(vert[1], 2) + math.pow(vert[2], 2))
+        ratio = self.radius/length
+
+        count = 0
+        for vert in self.verts:
+            self.verts[count] = (vert[0] * ratio, vert[1] * ratio, vert[2] * ratio)
+            count+=1
+    
+    def update_pdf_mesh(self):
+        verts_pdf = []
+        edges_pdf = []
+        faces_pdf = []
+        for face in self.faces:
+            # Make a vertex the new origin of the polygon
+            translated_face = []
+            base_vert = np.array(list(self.verts[face[0]]))
+            for vert in face:
+                v = np.array(list(self.verts[vert]))
+                trans = v - base_vert
+                translated_face.append(trans)
+        
+            # Rotate the vertices so that it rests on the xy plane
+            v1 = translated_face[1]
+            v2 = translated_face[2]
+
+            normal = np.cross(v1, v2)
+            normal /= np.linalg.norm(normal)
+
+            a = normal
+            b = np.array([0,0,1])
+
+            v = np.cross(a, b)
+            c = np.dot(a, b)
+
+            vx = np.matrix([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+
+            rot_matrix = np.eye(3) + vx + (vx @ vx) * (1/(1+c))
+
+            rotated_face = [np.array([self.radius * 2.0, 0, 0])]
+   
+            for vector in translated_face[1:]:
+                rot_v = rot_matrix @ vector
+                rot_v = np.asarray(rot_v).reshape(-1) + np.array([self.radius * 2.0, 0, 0])
+                rotated_face.append(rot_v)
+
+            # Add to pdf mesh list
+            verts_pdf.append(list(rotated_face))
+            edges_pdf.append([])
+
+            f = []
+            i = 0
+            while i < len(face):
+                f.append(i)
+                i+=1
+            faces_pdf.append([f])
+
+        self.verts_pdf = verts_pdf
+        self.edges_pdf = edges_pdf
+        self.faces_pdf = faces_pdf
+
+    def set_pdf_dim(self, width, height):
+        self.pdf_width = width
+        self.pdf_height = height
+    
+    def import_ball(self):
+        pass
+
+    def save_ball(self):
+        pass
+
+    def export_ball(self, file_path):
+        pdf = canvas.Canvas(file_path, pagesize=((self.pdf_width/25.4) * 72, (self.pdf_height/25.4) * 72))
+
+        pdf.save()
+
+class PolyhedronBall(SoccerBall):
+    def __init__(self):
+        pass
+
+class SphericalArcBall(SoccerBall):
+    def __init__(self):
+        pass
     
     def import_ball(self):
         pass
@@ -151,19 +343,8 @@ class SoccerBall:
     def export_ball(self):
         pass
 
-class PolyhedronBall(SoccerBall):
+class ClassicBall(PolyhedronBall):
     def __init__(self):
-        pass
-
-class SphericalArcBall(SoccerBall):
-    def __init__(self):
-        pass
-
-class ClassicBall(SoccerBall):
-    def __init__(self):
-        self.generate()
-
-    def generate(self):
         self.verts = [(-0.29814159870147705, 0.0, -0.815738320350647), 
                       (-0.09212832152843475, 0.2835466265678406, -0.815738320350647), 
                       (0.24119998514652252, 0.17523999512195587, -0.815738320350647), 
@@ -258,6 +439,15 @@ class ClassicBall(SoccerBall):
                       [50, 51, 52, 53, 54], 
                       [55, 56, 57, 58, 59], 
                       [0, 4, 10, 14, 16, 15]]
+        
+        self.radius = 115
+        self.panel_lip_size = 3
+        self.panel_hole_num = 9
+        self.panel_hole_size = 1
+
+        self.update_radius(self.radius)
+        self.update_pdf_mesh()
+
 
 # ------------------------------------------------------------------------
 #    Blender Setup
