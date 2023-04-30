@@ -41,18 +41,21 @@ except:
     ball_collection = bpy.data.collections.new('soccer_balls')
     bpy.context.scene.collection.children.link(ball_collection)
 
+# Make collection
+try:
+    pdf_collection = bpy.data.collections["pdf_components"]
+except:
+    pdf_collection = bpy.data.collections.new('pdf_components')
+    bpy.context.scene.collection.children.link(pdf_collection)
+
 # Soccer Ball
 ball = None
 
 def update_ball(self, context):
     if (ball is not None):
         # Remove old object
-        try:
-          bpy.ops.object.select_all(action='DESELECT')
-          ball_collection.objects["soccer_ball"].select_set(True)
-          bpy.ops.object.delete() 
-        except:
-          pass
+        for obj in ball_collection.objects:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
         # Make any needed modifications to mesh
         ball.update_radius(bpy.context.scene.sbd_radius)
@@ -67,33 +70,31 @@ def update_ball(self, context):
 
 def update_pdf(self, context):
     if (ball is not None):
-        # Remove old object
+        
         ball.set_pdf_dim(bpy.context.scene.sbd_pdf_width, bpy.context.scene.sbd_pdf_height)
         ball.update_pdf_mesh()
         pdf_faces_mesh, pdf_mesh = ball.get_pdf_mesh()
 
-        try:
-            bpy.ops.object.select_all(action='DESELECT')
-            count = 0
-            while (count < len(pdf_faces_mesh)):
-                ball_collection.objects["soccer_ball_pdf_" + str(count)].select_set(True)
-                count+=1
-            ball_collection.objects["soccer_ball_pdf"].select_set(True)
-            bpy.ops.object.delete() 
-
-        except:
-            pass
+        # Remove old object
+        for obj in pdf_collection.objects:
+            bpy.data.objects.remove(obj, do_unlink=True)
 
         if (bpy.context.scene.sbd_pdf_display):
             count = 0
             while (count < len(pdf_faces_mesh)):
                 # make object from mesh
                 new_object = bpy.data.objects.new("soccer_ball_pdf_" + str(count), pdf_faces_mesh[count])
+                new_object.lock_location = (False, False, True)
+                new_object.lock_rotation = (True, True, True)
+
                 # add object to scene collection
-                ball_collection.objects.link(new_object)
+                pdf_collection.objects.link(new_object)
                 count += 1
             new_pdf = bpy.data.objects.new("soccer_ball_pdf", pdf_mesh)
-            ball_collection.objects.link(new_pdf)
+            new_pdf.display_type = 'WIRE'
+            new_pdf.lock_location = (True, True, True)
+            new_pdf.lock_rotation = (True, True, True)
+            pdf_collection.objects.link(new_pdf)
 
 bpy.types.Scene.sbd_radius = bpy.props.FloatProperty(name="Radius", update=update_ball, default=115, min=1, max=500)
 bpy.types.Scene.sbd_pdf_display = bpy.props.BoolProperty(name="Pdf Display", update=update_pdf, default=False)
@@ -114,6 +115,20 @@ class CreateBallOperator(Operator):
 
         bpy.context.scene.sbd_radius = ball.radius
         update_ball(self, context)
+        return {'FINISHED'}
+
+class UpdatePdfTranslationsOperator(Operator):
+    bl_idname = "sbd.update_pdf_translations_operator"
+    bl_label = "Update PDF Translations"
+
+    def execute(self, context):
+        translations = []
+
+        for obj in pdf_collection.objects[1:]:
+            translations.append(np.array(obj.location))
+
+        ball.update_pdf_translations(translations)
+        update_pdf(self, context)
         return {'FINISHED'}
     
 
@@ -195,6 +210,15 @@ class SBDPanel(bpy.types.Panel):
         layout.label(text="Export:")
         col = layout.column(align=True)
         col.prop(context.scene, 'sbd_pdf_display')
+
+        layout.separator()
+        col = layout.column(align=True)
+
+        col.operator(UpdatePdfTranslationsOperator.bl_idname, text="Update Pdf Translation", icon="CURVE_PATH")
+
+        layout.separator()
+        col = layout.column(align=True)
+
         col.prop(context.scene, 'sbd_pdf_width')
         col.prop(context.scene, 'sbd_pdf_height')
         col.operator(ExportFileOperator.bl_idname, text="Export Soccer Ball", icon="EXPORT")
@@ -217,6 +241,8 @@ class SoccerBall:
 
         self.pdf_width = None
         self.pdf_height = None
+
+        self.pdf_translations = None
 
         self.radius = None
 
@@ -243,26 +269,24 @@ class SoccerBall:
             meshes.append(mesh)
             face_index+=1
         pdf_mesh = bpy.data.meshes.new(name="PDF")
-        pdf_mesh.from_pydata([[self.radius * 2, 0, -0.1],[self.radius * 2, self.pdf_height, -0.1],[self.radius * 2 + self.pdf_width, 0, -0.1],[self.radius * 2 + self.pdf_width, self.pdf_height, -0.1]], [], [[0,1,3,2]])
+        pdf_mesh.from_pydata([[self.radius * 2, 0, 0],[self.radius * 2, self.pdf_height, 0],[self.radius * 2 + self.pdf_width, 0, 0],[self.radius * 2 + self.pdf_width, self.pdf_height, 0]], [], [[0,1,3,2]])
         pdf_mesh.update()
         return meshes, pdf_mesh
-    
-    def update_radius(self, radius):
-        self.radius = radius
 
-        vert = self.verts[0]
-        length = math.sqrt(math.pow(vert[0], 2) + math.pow(vert[1], 2) + math.pow(vert[2], 2))
-        ratio = self.radius/length
-
-        count = 0
-        for vert in self.verts:
-            self.verts[count] = (vert[0] * ratio, vert[1] * ratio, vert[2] * ratio)
-            count+=1
+    def update_pdf_translations(self, translations):
+        self.pdf_translations = translations
     
     def update_pdf_mesh(self):
         verts_pdf = []
         edges_pdf = []
         faces_pdf = []
+
+        if (self.pdf_translations is None):
+            self.pdf_translations = []
+            for face in self.faces:
+                self.pdf_translations.append(np.array([0, 0, 0]))
+
+        face_count = 0
         for face in self.faces:
             # Make a vertex the new origin of the polygon
             translated_face = []
@@ -289,12 +313,14 @@ class SoccerBall:
 
             rot_matrix = np.eye(3) + vx + (vx @ vx) * (1/(1+c))
 
-            rotated_face = [np.array([self.radius * 2.0, 0, 0])]
-   
+            rotated_face = [np.array([self.radius * 2.0, 0, 0]) + self.pdf_translations[face_count]]
+
+            count = 1
             for vector in translated_face[1:]:
                 rot_v = rot_matrix @ vector
-                rot_v = np.asarray(rot_v).reshape(-1) + np.array([self.radius * 2.0, 0, 0])
+                rot_v = np.asarray(rot_v).reshape(-1) + np.array([self.radius * 2.0, 0, 0] + self.pdf_translations[face_count])
                 rotated_face.append(rot_v)
+                count+=1
 
             # Add to pdf mesh list
             verts_pdf.append(list(rotated_face))
@@ -306,6 +332,7 @@ class SoccerBall:
                 f.append(i)
                 i+=1
             faces_pdf.append([f])
+            face_count+=1
 
         self.verts_pdf = verts_pdf
         self.edges_pdf = edges_pdf
@@ -314,6 +341,18 @@ class SoccerBall:
     def set_pdf_dim(self, width, height):
         self.pdf_width = width
         self.pdf_height = height
+
+    def update_radius(self, radius):
+        self.radius = radius
+
+        vert = self.verts[0]
+        length = math.sqrt(math.pow(vert[0], 2) + math.pow(vert[1], 2) + math.pow(vert[2], 2))
+        ratio = self.radius/length
+
+        count = 0
+        for vert in self.verts:
+            self.verts[count] = (vert[0] * ratio, vert[1] * ratio, vert[2] * ratio)
+            count+=1
     
     def import_ball(self):
         pass
@@ -445,6 +484,8 @@ class ClassicBall(PolyhedronBall):
         self.panel_hole_num = 9
         self.panel_hole_size = 1
 
+        self.pdf_translations = None
+
         self.update_radius(self.radius)
         self.update_pdf_mesh()
 
@@ -453,7 +494,7 @@ class ClassicBall(PolyhedronBall):
 #    Blender Setup
 # ------------------------------------------------------------------------
 
-classes = [SBDPanel, LoadFileOperator, CreateBallOperator, ExportFileOperator]
+classes = [SBDPanel, LoadFileOperator, CreateBallOperator, ExportFileOperator, UpdatePdfTranslationsOperator]
 
 def register():
     for cls in classes:
