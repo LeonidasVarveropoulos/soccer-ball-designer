@@ -6,9 +6,7 @@ from bpy.types import Operator
 import math
 import numpy as np
 import mathutils
-
-import sys
-import subprocess
+import bmesh
 
 ball_module = bpy.data.texts["ball.py"].as_module()
 
@@ -33,8 +31,10 @@ except:
 # Soccer Ball
 ball = None
 
+ball_loaded = False
+
 def update_ball(self, context):
-    if (ball is not None):
+    if ((ball is not None) and ball_loaded):
         # Remove old object
         for obj in ball_collection.objects:
             bpy.data.objects.remove(obj, do_unlink=True)
@@ -51,30 +51,81 @@ def update_ball(self, context):
         update_pdf(self, context)
 
 def update_pdf(self, context):
-    if (ball is not None):
+    if ((ball is not None) and ball_loaded):
         
-        ball.set_pdf_dim(bpy.context.scene.sbd_pdf_width, bpy.context.scene.sbd_pdf_height)
+        ball.set_pdf_options(bpy.context.scene.sbd_pdf_width, bpy.context.scene.sbd_pdf_height, bpy.context.scene.sbd_panel_lip_size, bpy.context.scene.sbd_edge_hole_num, bpy.context.scene.sbd_panel_hole_size)
         ball.update_pdf_mesh()
-        pdf_faces_mesh, pdf_mesh = ball.get_pdf_mesh()
+        pdf_faces_mesh, pdf_lips_mesh, pdf_holes_mesh, pdf_mesh = ball.get_pdf_mesh()
 
         # Remove old object
         for obj in pdf_collection.objects:
             bpy.data.objects.remove(obj, do_unlink=True)
 
+        for col in pdf_collection.children:
+            for obj in col.objects:
+                bpy.data.objects.remove(obj, do_unlink=True)
+            bpy.data.collections.remove(col, do_unlink=True)
+
         if (bpy.context.scene.sbd_pdf_display):
             count = 0
             while (count < len(pdf_faces_mesh)):
+                # Make the pdf face collection object
+                soccer_ball_pdf_collection = bpy.data.collections.new("soccer_ball_pdf_" + str(count))
+
+                translation = mathutils.Vector((ball.pdf_translations[count][0] + (ball.radius * 2), ball.pdf_translations[count][1], ball.pdf_translations[count][2]))
+                rotation = mathutils.Vector((ball.pdf_rotations[count][0], ball.pdf_rotations[count][1], ball.pdf_rotations[count][2]))
+
                 # make object from mesh
-                new_object = bpy.data.objects.new("soccer_ball_pdf_" + str(count), pdf_faces_mesh[count])
-                new_object.lock_location = (False, False, True)
-                new_object.lock_rotation = (True, True, False)
+                new_face = bpy.data.objects.new("pdf_face_" + str(count), pdf_faces_mesh[count])
+                new_face.lock_location = (False, False, True)
+                new_face.lock_rotation = (True, True, False)
+                new_face.location = translation
+                new_face.rotation_euler = rotation
 
-                # Set pose
-                new_object.location = mathutils.Vector((ball.pdf_translations[count][0] + (ball.radius * 2), ball.pdf_translations[count][1], ball.pdf_translations[count][2]))
-                new_object.rotation_euler = mathutils.Vector((ball.pdf_rotations[count][0], ball.pdf_rotations[count][1], ball.pdf_rotations[count][2]))
+                soccer_ball_pdf_collection.objects.link(new_face)
 
-                # add object to scene collection
-                pdf_collection.objects.link(new_object)
+                # Create face lip
+                new_lip = bpy.data.objects.new("pdf_lip_" + str(count), pdf_lips_mesh[count])
+                new_lip.display_type = 'WIRE'
+                new_lip.lock_location = (False, False, True)
+                new_lip.lock_rotation = (True, True, False)
+                new_lip.location = translation
+                new_lip.rotation_euler = rotation
+
+                soccer_ball_pdf_collection.objects.link(new_lip)
+
+                # Create face holes
+                hole_count = 0
+                while hole_count < len(pdf_holes_mesh[count]):
+                    mesh = bpy.data.meshes.new("pdf_hole_" + str(count) + "_" + str(hole_count))
+                    obj = bpy.data.objects.new("pdf_hole_" + str(count) + "_" + str(hole_count), mesh)
+                    obj.lock_location = (False, False, True)
+                    obj.lock_rotation = (True, True, False)
+                    obj.location = translation
+                    obj.rotation_euler = rotation
+
+                    soccer_ball_pdf_collection.objects.link(obj)
+
+                    #new bmesh
+                    bm = bmesh.new()
+                    # load in a mesh
+                    bm.from_mesh(mesh)
+                    # create circle
+                    geom = bmesh.ops.create_circle(bm, segments=16, radius=ball.panel_hole_size)
+
+                    verts = geom["verts"]
+
+                    bmesh.ops.translate(         # Translate
+                        bm,
+                        verts=verts,
+                        vec=(pdf_holes_mesh[count][hole_count][0], pdf_holes_mesh[count][hole_count][1], 0))
+
+                    # write back to mesh
+                    bm.to_mesh(mesh)
+
+                    hole_count+=1
+
+                pdf_collection.children.link(soccer_ball_pdf_collection)
                 count += 1
 
             new_pdf = bpy.data.objects.new("soccer_ball_pdf", pdf_mesh)
@@ -88,6 +139,11 @@ def update_pdf(self, context):
 # ------------------------------------------------------------------------
 
 bpy.types.Scene.sbd_radius = bpy.props.FloatProperty(name="Radius", update=update_ball, default=115, min=1, max=500)
+
+bpy.types.Scene.sbd_panel_lip_size = bpy.props.FloatProperty(name="Panel Lip Size", update=update_pdf, default=115, min=0)
+bpy.types.Scene.sbd_edge_hole_num = bpy.props.FloatProperty(name="Edge Hole Num", update=update_pdf, default=115, min=0)
+bpy.types.Scene.sbd_panel_hole_size = bpy.props.FloatProperty(name="Panel Hole Size", update=update_pdf, default=115, min=0)
+
 bpy.types.Scene.sbd_pdf_display = bpy.props.BoolProperty(name="Pdf Display", update=update_pdf, default=False)
 bpy.types.Scene.sbd_pdf_width = bpy.props.FloatProperty(name="Pdf Width", update=update_pdf, default=500, min=10)
 bpy.types.Scene.sbd_pdf_height = bpy.props.FloatProperty(name="Pdf Height", update=update_pdf, default=500, min=10)
@@ -102,9 +158,19 @@ class CreateBallOperator(Operator):
 
     def execute(self, context):
         global ball
+        global ball_loaded
         ball = ball_module.ClassicBall()
 
+        ball_loaded = False
+
         bpy.context.scene.sbd_radius = ball.radius
+
+        bpy.context.scene.sbd_panel_lip_size = ball.panel_lip_size
+        bpy.context.scene.sbd_edge_hole_num = ball.edge_hole_num
+        bpy.context.scene.sbd_panel_hole_size = ball.panel_hole_size
+
+        ball_loaded = True
+
         update_ball(self, context)
         return {'FINISHED'}
     
@@ -126,7 +192,7 @@ class ExportBallOperator(Operator, ExportHelper):
 
     def execute(self, context):
         if ball is not None:
-            ball.export_ball(self.filepath)
+            ball.export_ball(self.filepath, pdf_collection)
         return {'FINISHED'}
 
 class SavePdfLayoutOperator(Operator):
@@ -139,7 +205,7 @@ class SavePdfLayoutOperator(Operator):
 
         count = 0
         for face in ball.faces:
-            obj = pdf_collection.objects["soccer_ball_pdf_" + str(count)]
+            obj = pdf_collection.children["soccer_ball_pdf_" + str(count)].objects["pdf_face_" + str(count)]
             translations.append(np.array([obj.location[0] - (ball.radius * 2), obj.location[1], obj.location[2]]))
             rotations.append(np.array([0.0, 0.0, obj.rotation_euler[2]]))
             count+=1
@@ -228,7 +294,15 @@ class SBDPanel(bpy.types.Panel):
 
         layout.separator()
         col = layout.column(align=True)
-        
+
+        col.prop(context.scene, 'sbd_panel_lip_size')
+        col.prop(context.scene, 'sbd_edge_hole_num')
+        col.prop(context.scene, 'sbd_panel_hole_size')
+
+
+        layout.separator()
+        col = layout.column(align=True)
+
         col.operator(SaveBallOperator.bl_idname, text="Save Soccer Ball", icon="EXPORT")
         col.operator(ExportBallOperator.bl_idname, text="Export Soccer Ball PDF", icon="EXPORT")
 

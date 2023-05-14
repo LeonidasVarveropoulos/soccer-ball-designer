@@ -6,6 +6,8 @@ import numpy as np
 #    Weird Import Stuff
 # ------------------------------------------------------------------------
 
+import subprocess
+
 def python_exec():
     try:
         path = bpy.app.binary_path_python
@@ -49,8 +51,9 @@ class SoccerBall:
         self.panel_lip_size = None
 
         # Num of holes per edge
-        self.panel_hole_num = None
+        self.edge_hole_num = None
 
+        # Radius
         self.panel_hole_size = None
 
     def get_mesh(self):
@@ -60,18 +63,65 @@ class SoccerBall:
         return mesh
     
     def get_pdf_mesh(self):
-        meshes = []
+        face_meshes = []
+        lip_meshes = []
+        holes_meshes = []
         face_index = 0
         while (face_index < len(self.verts_pdf)):
             mesh = bpy.data.meshes.new(name="Soccer Ball PDF")
             mesh.from_pydata(self.verts_pdf[face_index], self.edges_pdf[face_index], self.faces_pdf[face_index])
             mesh.update()
-            meshes.append(mesh)
+            face_meshes.append(mesh)
+
+            # Calculate lip mesh
+            new_verts = []
+            verts = self.verts_pdf[face_index]
+            for vert in verts:
+                vert_len = np.linalg.norm(np.array(vert))
+                wanted_len = vert_len + self.panel_lip_size
+                scale = wanted_len/vert_len
+                new_verts.append(list(np.array(vert) * scale))
+            mesh = bpy.data.meshes.new(name="Soccer Ball PDF")
+            mesh.from_pydata(new_verts, self.edges_pdf[face_index], self.faces_pdf[face_index])
+            mesh.update()
+            lip_meshes.append(mesh)
+
+            # Calculate holes
+            holes = []
+            first_vert = np.array(verts[self.faces_pdf[face_index][0][0]])
+            last_vert = np.array(verts[self.faces_pdf[face_index][0][-1]])
+
+            edge = first_vert - last_vert
+            step = np.linalg.norm(edge)/(int(self.edge_hole_num)-1)
+            for i in range(int(self.edge_hole_num)):
+                wanted = i * step
+                scale = wanted/np.linalg.norm(edge)
+
+                holes.append((edge*scale) + last_vert)
+
+            count = 0
+            while count < len(self.faces_pdf[face_index][0]) - 1:
+                first_vert = np.array(verts[self.faces_pdf[face_index][0][count]])
+                last_vert = np.array(verts[self.faces_pdf[face_index][0][count + 1]])
+
+                edge = first_vert - last_vert
+
+                step = np.linalg.norm(edge)/(int(self.edge_hole_num)-1)
+                for i in range(int(self.edge_hole_num)):
+                    wanted = i * step
+                    scale = wanted/np.linalg.norm(edge)
+
+                    holes.append((edge*scale) + last_vert)
+                count+=1
+
+            holes_meshes.append(holes)
+
             face_index+=1
+
         pdf_mesh = bpy.data.meshes.new(name="PDF")
         pdf_mesh.from_pydata([[self.radius * 2, 0, 0],[self.radius * 2, self.pdf_height, 0],[self.radius * 2 + self.pdf_width, 0, 0],[self.radius * 2 + self.pdf_width, self.pdf_height, 0]], [], [[0,1,3,2]])
         pdf_mesh.update()
-        return meshes, pdf_mesh
+        return face_meshes, lip_meshes, holes_meshes, pdf_mesh
 
     def update_pdf_translations(self, translations):
         self.pdf_translations = translations
@@ -143,9 +193,13 @@ class SoccerBall:
         self.edges_pdf = edges_pdf
         self.faces_pdf = faces_pdf
 
-    def set_pdf_dim(self, width, height):
+    def set_pdf_options(self, width, height, lip, hole_num, hole_size):
         self.pdf_width = width
         self.pdf_height = height
+        self.panel_lip_size = lip
+        self.edge_hole_num = hole_num
+        self.panel_hole_size = hole_size
+
 
     def update_radius(self, radius):
         self.radius = radius
@@ -165,8 +219,17 @@ class SoccerBall:
     def save_ball(self):
         pass
 
-    def export_ball(self, file_path):
+    def export_ball(self, file_path, pdf_collection):
         pdf = canvas.Canvas(file_path, pagesize=((self.pdf_width/25.4) * 72, (self.pdf_height/25.4) * 72))
+
+        # Loop through panels
+        for obj in pdf_collection.objects:
+            name_str = obj.name.split("_")
+            if (name_str[0] + name_str[1] + name_str[2] == "soccerballpdf"):
+                if (len(name_str) == 4):
+                    pass
+                    # Draw outline + lip
+                    # Draw holes on outline
 
         pdf.save()
 
@@ -286,7 +349,7 @@ class ClassicBall(PolyhedronBall):
         
         self.radius = 115
         self.panel_lip_size = 3
-        self.panel_hole_num = 9
+        self.edge_hole_num = 9
         self.panel_hole_size = 1
 
         self.pdf_translations = []
