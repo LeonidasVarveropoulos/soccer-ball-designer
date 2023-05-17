@@ -1,6 +1,7 @@
 import bpy
 import math
 import numpy as np
+import bmesh
 
 # ------------------------------------------------------------------------
 #    Weird Import Stuff
@@ -223,13 +224,40 @@ class SoccerBall:
         pdf = canvas.Canvas(file_path, pagesize=((self.pdf_width/25.4) * 72, (self.pdf_height/25.4) * 72))
 
         # Loop through panels
-        for obj in pdf_collection.objects:
-            name_str = obj.name.split("_")
+        for child in pdf_collection.children:
+            name_str = child.name.split("_")
             if (name_str[0] + name_str[1] + name_str[2] == "soccerballpdf"):
                 if (len(name_str) == 4):
-                    pass
-                    # Draw outline + lip
-                    # Draw holes on outline
+                    for obj in child.objects:
+                        obj_str = obj.name.split("_")
+                        # Draw outline/lip
+                        if (obj_str[0] + obj_str[1] == "pdflip"):
+                            for face in obj.data.polygons:
+                                prev_vert = None
+                                first_vert = None
+                                count = 0
+                                for vert_index in face.vertices:
+                                    vert = obj.data.vertices[vert_index].co + obj.location
+                                    pdf_vertex = np.array([vert[0], vert[1], vert[2]])
+                                    pdf_vertex-=np.array([self.radius * 2, 0, 0])
+                                    pdf_vertex = (pdf_vertex/25.4) * 72
+                                    if (count == 0):
+                                        first_vert = pdf_vertex
+                                    if (prev_vert is not None):
+                                        pdf.line(prev_vert[0], prev_vert[1], pdf_vertex[0], pdf_vertex[1])
+                                    prev_vert = pdf_vertex
+                                    count+=1
+                                pdf.line(prev_vert[0], prev_vert[1], first_vert[0], first_vert[1])
+  
+                        # Draw holes on outline
+                        elif (obj_str[0] + obj_str[1] == "pdfhole"):
+                            for circle in obj.data.polygons:
+                                print("This is a circle in: " + obj_str[2])
+                                center = circle.center + obj.location
+                                center = np.array([center[0], center[1], center[2]])
+                                center-=np.array([self.radius * 2, 0, 0])
+                                center = (center/25.4) * 72
+                                pdf.circle(center[0], center[1], (self.panel_hole_size/25.4) * 72)
 
         pdf.save()
 

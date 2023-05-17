@@ -94,18 +94,18 @@ def update_pdf(self, context):
 
                 soccer_ball_pdf_collection.objects.link(new_lip)
 
+                mesh = bpy.data.meshes.new("pdf_hole_" + str(count))
+                obj = bpy.data.objects.new("pdf_hole_" + str(count), mesh)
+                obj.lock_location = (False, False, True)
+                obj.lock_rotation = (True, True, False)
+                obj.location = translation
+                obj.rotation_euler = rotation
+
+                soccer_ball_pdf_collection.objects.link(obj)
+
                 # Create face holes
                 hole_count = 0
                 while hole_count < len(pdf_holes_mesh[count]):
-                    mesh = bpy.data.meshes.new("pdf_hole_" + str(count) + "_" + str(hole_count))
-                    obj = bpy.data.objects.new("pdf_hole_" + str(count) + "_" + str(hole_count), mesh)
-                    obj.lock_location = (False, False, True)
-                    obj.lock_rotation = (True, True, False)
-                    obj.location = translation
-                    obj.rotation_euler = rotation
-
-                    soccer_ball_pdf_collection.objects.link(obj)
-
                     #new bmesh
                     bm = bmesh.new()
                     # load in a mesh
@@ -114,6 +114,8 @@ def update_pdf(self, context):
                     geom = bmesh.ops.create_circle(bm, segments=16, radius=ball.panel_hole_size)
 
                     verts = geom["verts"]
+
+                    bm.faces.new(verts)
 
                     bmesh.ops.translate(         # Translate
                         bm,
