@@ -162,6 +162,9 @@ class SoccerBall:
             v = np.cross(a, b)
             c = np.dot(a, b)
 
+            if (c == -1):
+                c = np.dot(-a, b)
+
             vx = np.matrix([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
 
             rot_matrix = np.eye(3) + vx + (vx @ vx) * (1/(1+c))
@@ -222,6 +225,7 @@ class SoccerBall:
 
     def export_ball(self, file_path, pdf_collection):
         pdf = canvas.Canvas(file_path, pagesize=((self.pdf_width/25.4) * 72, (self.pdf_height/25.4) * 72))
+        pdf.setLineWidth((0.03/25.4) * 72) # 0.03 mm
 
         # Loop through panels
         for child in pdf_collection.children:
