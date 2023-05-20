@@ -237,9 +237,14 @@ class SoccerBall:
                                 first_vert = None
                                 count = 0
                                 for vert_index in face.vertices:
-                                    vert = obj.data.vertices[vert_index].co + obj.location
-                                    pdf_vertex = np.array([vert[0], vert[1], vert[2]])
-                                    pdf_vertex-=np.array([self.radius * 2, 0, 0])
+                                    sin = math.sin(obj.rotation_euler.z)
+                                    cos = math.cos(obj.rotation_euler.z)
+                                    location = np.array([obj.location.x, obj.location.y, obj.location.z])
+                                    vert = obj.data.vertices[vert_index].co
+                                    x = vert[0] * cos - sin * vert[1]
+                                    y = vert[0] * (sin) + cos * vert[1]
+                                    pdf_vertex = np.array([x, y, vert[2]])
+                                    pdf_vertex = pdf_vertex + location - np.array([self.radius * 2, 0, 0])
                                     pdf_vertex = (pdf_vertex/25.4) * 72
                                     if (count == 0):
                                         first_vert = pdf_vertex
@@ -252,10 +257,14 @@ class SoccerBall:
                         # Draw holes on outline
                         elif (obj_str[0] + obj_str[1] == "pdfhole"):
                             for circle in obj.data.polygons:
-                                print("This is a circle in: " + obj_str[2])
-                                center = circle.center + obj.location
-                                center = np.array([center[0], center[1], center[2]])
-                                center-=np.array([self.radius * 2, 0, 0])
+                                sin = math.sin(obj.rotation_euler.z)
+                                cos = math.cos(obj.rotation_euler.z)
+                                location = np.array([obj.location.x, obj.location.y, obj.location.z])
+                                vert = circle.center
+                                x = vert[0] * cos - sin * vert[1]
+                                y = vert[0] * (sin) + cos * vert[1]
+                                center = np.array([x, y, vert[2]])
+                                center = center + location - np.array([self.radius * 2, 0, 0])
                                 center = (center/25.4) * 72
                                 pdf.circle(center[0], center[1], (self.panel_hole_size/25.4) * 72)
 
