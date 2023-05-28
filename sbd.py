@@ -194,7 +194,7 @@ class ExportBallOperator(Operator, ExportHelper):
 
     def execute(self, context):
         if ball is not None:
-            ball.export_ball(self.filepath, pdf_collection)
+            ball.export_ball(context, self.filepath, pdf_collection)
         return {'FINISHED'}
 
 class SavePdfLayoutOperator(Operator):

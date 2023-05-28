@@ -223,9 +223,16 @@ class SoccerBall:
     def save_ball(self):
         pass
 
-    def export_ball(self, file_path, pdf_collection):
+    def export_ball(self, context, file_path, pdf_collection):
+        # SAVE PDF BALL OUTLINE
         pdf = canvas.Canvas(file_path, pagesize=((self.pdf_width/25.4) * 72, (self.pdf_height/25.4) * 72))
         pdf.setLineWidth((0.03/25.4) * 72) # 0.03 mm
+
+        obj_uv = context.active_object
+        me_uv = obj_uv.data
+        bm_uv = bmesh.from_edit_mesh(me_uv)
+
+        uv_layer = bm_uv.loops.layers.uv.verify()
 
         # Loop through panels
         for child in pdf_collection.children:
@@ -257,6 +264,37 @@ class SoccerBall:
                                     prev_vert = pdf_vertex
                                     count+=1
                                 pdf.line(prev_vert[0], prev_vert[1], first_vert[0], first_vert[1])
+
+                        # Map uv coordinates for image texture
+                        if (obj_str[0] + obj_str[1] == "pdfface"):
+                            uv_face = bm_uv.faces[int(obj_str[2])]
+
+                            uv_verts = []
+                            for face in obj.data.polygons:
+                                count = 0
+                                for vert_index in face.vertices:
+                                    sin = math.sin(obj.rotation_euler.z)
+                                    cos = math.cos(obj.rotation_euler.z)
+                                    location = np.array([obj.location.x, obj.location.y, obj.location.z])
+                                    vert = obj.data.vertices[vert_index].co
+                                    x = vert[0] * cos - sin * vert[1]
+                                    y = vert[0] * (sin) + cos * vert[1]
+                                    pdf_vertex = np.array([x, y, vert[2]])
+                                    pdf_vertex = pdf_vertex + location - np.array([self.radius * 2, 0, 0])
+                                    uv_verts.append(pdf_vertex)
+                                    count+=1
+
+                            # adjust uv coordinates
+                            count = 0
+                            for loop in uv_face.loops:
+                                loop_uv = loop[uv_layer]
+
+                                vert = uv_verts[count]
+                                vert/=600
+                                
+                                # use xy position of the vertex as a uv coordinate
+                                loop_uv.uv = (vert[0], vert[1])
+                                count+=1
   
                         # Draw holes on outline
                         elif (obj_str[0] + obj_str[1] == "pdfhole"):
@@ -273,6 +311,13 @@ class SoccerBall:
                                 pdf.circle(center[0], center[1], (self.panel_hole_size/25.4) * 72)
 
         pdf.save()
+
+        # SAVE UV
+        bmesh.update_edit_mesh(me_uv)
+
+
+
+
 
 class PolyhedronBall(SoccerBall):
     def __init__(self):
